@@ -17,13 +17,14 @@
  */
 
 import type { ReactNode } from 'react';
-import { Box, Button, Card, Chip, IconButton, Stack, Tooltip, Typography } from '@wso2/oxygen-ui';
-import { Clock, Copy, Edit, Lock, Rocket } from '@wso2/oxygen-ui-icons-react';
+import { Box, Button, Card, IconButton, Stack, Tooltip, Typography } from '@wso2/oxygen-ui';
+import { Clock, Copy, Edit, Rocket } from '@wso2/oxygen-ui-icons-react';
 import { defineMessages, FormattedMessage, useIntl } from 'react-intl';
 import { Link as RouterLink } from 'react-router-dom';
 
 import { useFormatters } from '@/i18n/useFormatters';
-import { Can, type PermissionOperation } from '@/permissions';
+import { useExtensions } from '@/extensions';
+import { Can, usePermissions, type PermissionOperation } from '@/permissions';
 import { ApiThumbnailManager } from '../components/ApiThumbnailManager';
 import { ApiKindChip, VersionChip } from '../listing/components/RestApiChips';
 
@@ -58,6 +59,11 @@ const messages = defineMessages({
     defaultMessage: 'Deploy to Gateway',
     description: "Button on the API overview header that opens the API's deployment page.",
   },
+  viewDeployments: {
+    id: 'apiControlPlane.pages.appShell.appShellPages.apis.ApiDetailPage.viewDeployments',
+    defaultMessage: 'View Deployments',
+    description: "Button on the API overview header that opens the API's deployment page.",
+  },
   descriptionPlaceholder: {
     id: 'apiControlPlane.pages.appShell.appShellPages.apis.ApiDetailPage.description.placeholder',
     defaultMessage: 'No description',
@@ -69,17 +75,6 @@ const messages = defineMessages({
     defaultMessage: 'Edit API details',
     description:
       'Accessible label and tooltip for the button beside the API name, which opens the edit page.',
-  },
-  gatewayManaged: {
-    id: 'apiControlPlane.pages.appShell.appShellPages.apis.ApiDetailPage.gatewayManaged',
-    defaultMessage: 'Gateway-managed',
-    description:
-      'Chip marking an API that was discovered from a gateway and cannot be edited here.',
-  },
-  gatewayManagedHint: {
-    id: 'apiControlPlane.pages.appShell.appShellPages.apis.ApiDetailPage.gatewayManagedHint',
-    defaultMessage: 'Discovered from a data-plane gateway, so it is read-only in this console.',
-    description: 'Tooltip explaining the gateway-managed chip.',
   },
   transports: {
     id: 'apiControlPlane.pages.appShell.appShellPages.apis.ApiDetailPage.transports.label',
@@ -153,9 +148,14 @@ export type ApiOverviewHeaderProps = {
   banner: ReactNode;
   /** Whether the caller may edit this API (on top of it not being read-only). */
   canEdit: boolean;
+  deployPath: string;
   /** The operation the Deploy button is gated on. */
   deployOperation: PermissionOperation;
-  deployPath: string;
+  /**
+   * The page slot a host may override the Deploy page through. When an override
+   * declares `actionScopes`, the button is gated on those instead.
+   */
+  deploySlot?: string;
   editPath: string;
 };
 
@@ -173,9 +173,19 @@ export function ApiOverviewHeader({
   canEdit,
   deployOperation,
   deployPath,
+  deploySlot,
   editPath,
 }: ApiOverviewHeaderProps) {
   const intl = useIntl();
+  // A host that replaces the Deploy page may deploy under other scopes than the
+  // built-in page (the cloud deploys through its pipeline); its scopes decide.
+  const { hasScope } = usePermissions();
+  const deployOverride = useExtensions().find(
+    (entry) => deploySlot !== undefined && entry.slot === deploySlot,
+  );
+  const overrideScopes = deployOverride?.actionScopes;
+  const viewOnlyDeploy =
+    overrideScopes !== undefined && !overrideScopes.some((scope) => hasScope(scope));
   const { dateTime, relativeTime } = useFormatters();
   const displayName = api.displayName || apiId;
   const context = api.context || '/';
@@ -220,17 +230,6 @@ export function ApiOverviewHeader({
                     {displayName}
                   </Typography>
                 </Tooltip>
-                {api.readOnly && (
-                  <Tooltip title={intl.formatMessage(messages.gatewayManagedHint)}>
-                    <Chip
-                      icon={<Lock size={12} />}
-                      label={intl.formatMessage(messages.gatewayManaged)}
-                      size="small"
-                      sx={{ flexShrink: 0, typography: 'caption' }}
-                      variant="outlined"
-                    />
-                  </Tooltip>
-                )}
               </Stack>
               <Stack alignItems="center" direction="row" spacing={0.75}>
                 <VersionChip version={api.version} />
@@ -265,12 +264,16 @@ export function ApiOverviewHeader({
                       <FormattedMessage {...messages.created} />
                     </Typography>
                     <Typography variant="body2">{relativeTime(api.createdAt)}</Typography>
-                    <Typography color="text.secondary" sx={{ opacity: 0.75 }} variant="body2">
-                      <FormattedMessage {...messages.by} />
-                    </Typography>
-                    <Typography variant="body2">
-                      {api.createdBy || intl.formatMessage(messages.unknownCreator)}
-                    </Typography>
+                    {!api.readOnly && (
+                      <>
+                        <Typography color="text.secondary" sx={{ opacity: 0.75 }} variant="body2">
+                          <FormattedMessage {...messages.by} />
+                        </Typography>
+                        <Typography variant="body2">
+                          {api.createdBy || intl.formatMessage(messages.unknownCreator)}
+                        </Typography>
+                      </>
+                    )}
                   </Stack>
                 </Tooltip>
               )}
@@ -322,7 +325,20 @@ export function ApiOverviewHeader({
               </IconButton>
             </Tooltip>
           )}
-          <Can do={deployOperation} denied="disable">
+          {api.readOnly || viewOnlyDeploy ? (
+            // Viewing deployments is not deploying: a gateway owns these (or the
+            // host's Deploy page would refuse this user's deploy), so the link
+            // stays open to anyone who can see the API.
+            <Button
+              component={RouterLink}
+              startIcon={<Rocket size={18} />}
+              sx={{ flexShrink: 0 }}
+              to={deployPath}
+              variant="contained"
+            >
+              <FormattedMessage {...messages.viewDeployments} />
+            </Button>
+          ) : overrideScopes !== undefined ? (
             <Button
               component={RouterLink}
               startIcon={<Rocket size={18} />}
@@ -332,7 +348,19 @@ export function ApiOverviewHeader({
             >
               <FormattedMessage {...messages.deployToGateway} />
             </Button>
-          </Can>
+          ) : (
+            <Can do={deployOperation} denied="disable">
+              <Button
+                component={RouterLink}
+                startIcon={<Rocket size={18} />}
+                sx={{ flexShrink: 0 }}
+                to={deployPath}
+                variant="contained"
+              >
+                <FormattedMessage {...messages.deployToGateway} />
+              </Button>
+            </Can>
+          )}
         </Stack>
       </Box>
       {banner}

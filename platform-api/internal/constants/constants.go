@@ -85,6 +85,10 @@ const PublicationAPITypeRestAPI = "rest-api"
 // GraphQLApi: the URL segment its publication routes use.
 const PublicationAPITypeGraphQLAPI = "graphql-api"
 
+// PublicationAPITypeMCPProxy is PublicationAPITypeRestAPI's counterpart for
+// MCP proxies: the URL segment their publication routes use.
+const PublicationAPITypeMCPProxy = "mcp-proxy"
+
 // Kinds of artifacts
 const (
 	RestApi             = "RestApi"
@@ -156,6 +160,22 @@ const AdminRole = "admin"
 // a user whose mapping was removed.
 const DeletedUser = "deleted_user"
 
+// MigrationActorSub is the IdP subject (user_idp_references.idp_id) of the
+// synthetic user the v1→v2 migration client acts as: it seeds the row under
+// this subject and stamps that user as created_by / updated_by / performed_by
+// on every row it writes (organizations, gateways, artifacts, API keys,
+// deployments, deployment status, mappings, secrets), so audit fields render
+// it, the reverse migration maps it back to v1's empty creator, and
+// platform-api recognises a migrated row by a creator that resolves to it
+// (gatewaytranslator.KeyEventActor). Namespaced so no IdP can issue it as a
+// real subject.
+const MigrationActorSub = "system:platform-api-migration"
+
+// LegacyMigrationActorSub is the subject the migration client seeded before
+// MigrationActorSub was namespaced. Databases migrated with those builds carry
+// it, so code that recognises the migration actor accepts both.
+const LegacyMigrationActorSub = "platform-api-migration"
+
 // Deployment limit constants
 const (
 	// DeploymentLimitBuffer is the buffer added to MaxPerAPIGateway for hard limit enforcement
@@ -205,6 +225,32 @@ const (
 	ScopeThumbnailRead   = "ap:thumbnail:read"
 	ScopeThumbnailManage = "ap:thumbnail:manage"
 )
+
+// Service-account scopes. Manage creates privilege (an account and its roles),
+// so keep it out of self-service roles, as with ScopeAPIKeyAllManage.
+const (
+	ScopeServiceAccountRead   = "ap:service_account:read"
+	ScopeServiceAccountManage = "ap:service_account:manage"
+)
+
+// ServiceAccountSubPrefix namespaces a service account's sub claim so it cannot
+// collide with a real user in user_idp_references.idp_id (UNIQUE). Reserved at
+// startup, in file-mode config and in IdP-mode authentication.
+const ServiceAccountSubPrefix = "sa:"
+
+// ServiceAccountTokenVersionClaim carries the account's token version at mint
+// time. A token below the account's revocation watermark is rejected, which
+// needs no clock agreement between replicas.
+const ServiceAccountTokenVersionClaim = "sa_tv"
+
+// ServiceAccountReservedHandle is the public token endpoint's path segment. An
+// account with this handle would sit under that auth skip path, so every
+// management call on it would arrive unauthenticated and fail.
+const ServiceAccountReservedHandle = "token"
+
+// JWKSPath publishes the service-account signing keys. At the server root, not
+// under APIBasePath, so the URL a key manager stores survives an API version bump.
+const JWKSPath = "/.well-known/jwks"
 
 // Custom Policy ManagedBy constants
 const (

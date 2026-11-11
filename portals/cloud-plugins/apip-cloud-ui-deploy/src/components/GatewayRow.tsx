@@ -17,7 +17,7 @@
  */
 
 import { useState, type FC } from 'react';
-import { Box, Button, Card, CardContent, Collapse, Typography } from '@wso2/oxygen-ui';
+import { Box, Button, Card, CardContent, Collapse, Tooltip, Typography } from '@wso2/oxygen-ui';
 import { ChevronDown, ChevronUp, Clock, Eye } from '@wso2/oxygen-ui-icons-react';
 import ActionRow from './ActionRow';
 import EndpointUrlDrawer from './EndpointUrlDrawer';
@@ -33,6 +33,12 @@ export type GatewayRowProps = {
   environmentName: string;
   busy: boolean;
   /**
+   * Why Stop is unavailable whatever the gateway's state — the API is
+   * gateway-owned or not yet verified, or the user lacks the scope — shown as
+   * the button's tooltip. Absent when stopping is allowed.
+   */
+  disabledReason?: string;
+  /**
    * Whether this artifact's deployment has a backend URL of its own to show. An
    * LLM provider's upstream belongs to the provider rather than to the deployment,
    * so there is nothing per-gateway to read and the row leaves it out instead of
@@ -47,6 +53,7 @@ const GatewayRow: FC<GatewayRowProps> = ({
   gateway,
   environmentName,
   busy,
+  disabledReason,
   showEndpointUrl = true,
   onStop,
 }) => {
@@ -64,6 +71,7 @@ const GatewayRow: FC<GatewayRowProps> = ({
   //
   // Nothing to stop while a deployment is still settling, or where there is none.
   const actionDisabled =
+    Boolean(disabledReason) ||
     busy ||
     gateway.status === 'NOT_DEPLOYED' ||
     gateway.status === 'UNDEPLOYED' ||
@@ -141,15 +149,21 @@ const GatewayRow: FC<GatewayRowProps> = ({
               </>
             ) : null}
 
-            <Button
-              fullWidth
-              variant="outlined"
-              color="error"
-              disabled={actionDisabled}
-              onClick={onStop}
-            >
-              Stop deployment
-            </Button>
+            <Tooltip title={disabledReason ?? ''}>
+              {/* Wrapped: a disabled button fires no events, so the tooltip
+                  explaining why it is disabled would never open. */}
+              <span style={{ display: 'block' }}>
+                <Button
+                  fullWidth
+                  variant="outlined"
+                  color="error"
+                  disabled={actionDisabled}
+                  onClick={onStop}
+                >
+                  Stop deployment
+                </Button>
+              </span>
+            </Tooltip>
           </Box>
         </Collapse>
       </CardContent>

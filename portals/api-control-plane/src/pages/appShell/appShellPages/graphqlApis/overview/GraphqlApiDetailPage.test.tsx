@@ -18,9 +18,10 @@
 
 import { http, HttpResponse } from 'msw';
 import { Route, Routes } from 'react-router-dom';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { ApiScopeProvider } from '@/api/core/ApiScopeProvider';
+import { runtimeConfig } from '@/config/runtime';
 import { resetHttpClient } from '@/api/core/http';
 import {
   accepts,
@@ -29,6 +30,7 @@ import {
   aGraphQLApiDetail,
   apiUrl,
   collection,
+  failure,
   recorder,
   resource,
   type DeploymentFixture,
@@ -141,7 +143,7 @@ describe('GraphqlApiDetailPage', () => {
     expect(screen.queryByText(/could not be parsed/)).not.toBeInTheDocument();
   });
 
-  it('hides the edit button and shows a Gateway-managed chip for a read-only API', async () => {
+  it('hides the edit button and offers View Deployments for a read-only API', async () => {
     const readOnlyApi = { ...api, readOnly: true };
     server.use(
       resource('/graphql-apis/:graphqlApiId', readOnlyApi),
@@ -153,9 +155,13 @@ describe('GraphqlApiDetailPage', () => {
     renderPage();
 
     await screen.findByRole('heading', { name: 'Countries GraphQL API' });
-    expect(screen.getByText('Gateway-managed')).toBeInTheDocument();
+    // A gateway owns a read-only API's deployments: the header links to them
+    // instead of offering to deploy.
+    expect(screen.getByRole('link', { name: 'View Deployments' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Deploy to Gateway' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Edit API details' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Edit endpoint' })).not.toBeInTheDocument();
+    // The endpoint stays visible but cannot be edited: the gateway owns it.
+    expect(screen.getByRole('button', { name: 'Edit endpoint' })).toBeDisabled();
   });
 
   it('shows only the endpoint, not invoke URL or API keys, before anything is deployed', async () => {
@@ -296,5 +302,115 @@ describe('GraphqlApiDetailPage', () => {
     renderPage();
 
     expect(await screen.findByText('GraphQL API not found')).toBeInTheDocument();
+  });
+});
+
+describe('GraphqlApiDetailPage deployed gateways in cloud', () => {
+  const PIPELINE = `/projects/${PROJECT}/apis/${API}/deployments`;
+  const original = runtimeConfig.cloudProxyEnabled;
+  const platformDeployment = aDeployment({
+    deploymentId: 'deployment-1',
+    gatewayId: 'edge-gateway',
+    name: 'Edge_Gateway_2026-01-01_1',
+    status: 'DEPLOYED',
+  });
+
+  const serve = (platformDeployments: DeploymentFixture[]) =>
+    server.use(
+      resource('/graphql-apis/:graphqlApiId', api),
+      resource('/graphql-apis/:graphqlApiId/sdl', { sdl: SAMPLE_SDL }),
+      collection('/graphql-apis/:graphqlApiId/gateways', [gateway]),
+      collection('/graphql-apis/:graphqlApiId/deployments', platformDeployments),
+      collection('/me/api-keys', []),
+    );
+
+  beforeEach(() => {
+    runtimeConfig.cloudProxyEnabled = true;
+  });
+
+  afterEach(() => {
+    runtimeConfig.cloudProxyEnabled = original;
+  });
+
+  it('follows the pipeline: deployed there shows the panel even with no platform record', async () => {
+    serve([]);
+    server.use(
+      resource(PIPELINE, {
+        list: [
+          {
+            environment: 'development',
+            gateways: [{ gatewayId: 'edge-gateway', deploymentId: 'd-1', status: 'DEPLOYED' }],
+          },
+        ],
+      }),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText('Deployed gateways')).toBeInTheDocument();
+  });
+
+  it('follows the pipeline: not deployed there hides the panel despite a platform record', async () => {
+    serve([platformDeployment]);
+    // Hold the pipeline's answer so the platform's record is seen first: the
+    // panel must appear, then go once the pipeline answers.
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      http.get(apiUrl(PIPELINE), async () => {
+        await held;
+        return HttpResponse.json({
+          list: [
+            { environment: 'development', gateways: [{ gatewayId: 'edge-gateway', status: 'NOT_DEPLOYED' }] },
+          ],
+        });
+      }),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText('Deployed gateways')).toBeInTheDocument();
+    release();
+    await waitFor(() => expect(screen.queryByText('Deployed gateways')).not.toBeInTheDocument());
+  });
+
+  it('ignores a gateway’s own isDeployed flag once the pipeline answers', async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    server.use(
+      resource('/graphql-apis/:graphqlApiId', api),
+      resource('/graphql-apis/:graphqlApiId/sdl', { sdl: SAMPLE_SDL }),
+      collection('/graphql-apis/:graphqlApiId/gateways', [{ ...gateway, isDeployed: true }]),
+      // No platform deployment record: only the gateway's own flag keeps it listed.
+      collection('/graphql-apis/:graphqlApiId/deployments', []),
+      collection('/me/api-keys', []),
+      http.get(apiUrl(PIPELINE), async () => {
+        await held;
+        return HttpResponse.json({
+          list: [
+            { environment: 'development', gateways: [{ gatewayId: 'edge-gateway', status: 'NOT_DEPLOYED' }] },
+          ],
+        });
+      }),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText('Deployed gateways')).toBeInTheDocument();
+    release();
+    await waitFor(() => expect(screen.queryByText('Deployed gateways')).not.toBeInTheDocument());
+  });
+
+  it('keeps the platform list when the pipeline call is refused', async () => {
+    serve([platformDeployment]);
+    server.use(failure('get', PIPELINE, 403, 'FORBIDDEN'));
+
+    renderPage();
+
+    expect(await screen.findByText('Deployed gateways')).toBeInTheDocument();
   });
 });

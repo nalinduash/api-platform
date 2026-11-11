@@ -27,6 +27,10 @@ export type EnvironmentCardProps = {
   environment: Environment;
   nextEnvironment?: Environment;
   busy: boolean;
+  /** Why promoting is unavailable; disables it when set. */
+  lockedReason?: string;
+  /** Why stopping a deployment is unavailable; disables Stop on every gateway row when set. */
+  stopDisabledReason?: string;
   /** Whether this artifact's deployments carry a backend URL worth showing per gateway. */
   takesEndpoint: boolean;
   onPromoteClick: () => void;
@@ -45,6 +49,8 @@ const EnvironmentCard: FC<EnvironmentCardProps> = ({
   environment,
   nextEnvironment,
   busy,
+  lockedReason,
+  stopDisabledReason,
   takesEndpoint,
   onPromoteClick,
   onStopGateway,
@@ -73,6 +79,8 @@ const EnvironmentCard: FC<EnvironmentCardProps> = ({
 
   const promoteDisabledReason = !nextEnvironment
     ? ''
+    : lockedReason
+      ? lockedReason
     : !hasBuildToPromote
       ? `Nothing is deployed in ${environment.name} to promote. Deploy here first.`
       : activeGatewayCount(nextEnvironment.gateways) === 0
@@ -159,6 +167,7 @@ const EnvironmentCard: FC<EnvironmentCardProps> = ({
                 gateway={gateway}
                 environmentName={environment.name}
                 busy={busy}
+                disabledReason={stopDisabledReason}
                 showEndpointUrl={takesEndpoint}
                 onStop={() => onStopGateway(gateway.id)}
               />
@@ -176,7 +185,7 @@ const EnvironmentCard: FC<EnvironmentCardProps> = ({
                   fullWidth
                   variant="contained"
                   startIcon={<MoveRight size={16} />}
-                  disabled={!canPromote || busy}
+                  disabled={Boolean(lockedReason) || !canPromote || busy}
                   onClick={onPromoteClick}
                 >
                   Promote to {nextEnvironment.name}

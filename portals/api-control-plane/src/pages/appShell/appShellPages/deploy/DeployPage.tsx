@@ -47,8 +47,8 @@ const useUndeployForCard: UseDeploymentMutationHook = () => {
   const mutation = useUndeployDeployment();
   return {
     isPending: mutation.isPending,
-    mutate: ({ apiId, deploymentId }, options) =>
-      mutation.mutate({ restApiId: apiId, deploymentId }, options),
+    mutate: ({ apiId, deploymentId, gatewayId }, options) =>
+      mutation.mutate({ restApiId: apiId, deploymentId, gatewayId }, options),
   };
 };
 
@@ -56,8 +56,8 @@ const useRestoreForCard: UseDeploymentMutationHook = () => {
   const mutation = useRestoreDeployment();
   return {
     isPending: mutation.isPending,
-    mutate: ({ apiId, deploymentId }, options) =>
-      mutation.mutate({ restApiId: apiId, deploymentId }, options),
+    mutate: ({ apiId, deploymentId, gatewayId }, options) =>
+      mutation.mutate({ restApiId: apiId, deploymentId, gatewayId }, options),
   };
 };
 
@@ -111,6 +111,9 @@ function Deploy() {
       mutations={REST_DEPLOY_MUTATIONS}
       onRefreshDeployments={() => void deploymentsQuery.refetch()}
       orgHandle={params.orgHandle ?? ''}
+      // A gateway-created API is owned by that gateway: deployments are shown,
+      // but every action that changes them is disabled.
+      readOnly={apiQuery.data?.readOnly === true}
     />
   );
 }

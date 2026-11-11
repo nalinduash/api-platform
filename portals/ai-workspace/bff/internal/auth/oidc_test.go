@@ -262,6 +262,7 @@ func TestAuthCodeURLExtrasCannotOverrideProtocolParams(t *testing.T) {
 
 	authURL, _, err := o.AuthCodeURL("/", url.Values{
 		"fidp":          {"google"},
+		"username":      {"someone@example.com"},
 		"scope":         {"openid admin"},
 		"redirect_uri":  {"https://evil.example.com/steal"},
 		"response_type": {"token"},
@@ -279,6 +280,9 @@ func TestAuthCodeURLExtrasCannotOverrideProtocolParams(t *testing.T) {
 	if q.Get("fidp") != "google" {
 		t.Errorf("fidp = %q, want it forwarded", q.Get("fidp"))
 	}
+	if q.Get("username") != "someone@example.com" {
+		t.Errorf("username = %q, want it forwarded", q.Get("username"))
+	}
 	for name, want := range map[string]string{
 		"response_type": "code",
 		"client_id":     o.clientID,
@@ -287,6 +291,37 @@ func TestAuthCodeURLExtrasCannotOverrideProtocolParams(t *testing.T) {
 	} {
 		if got := q.Get(name); got != want {
 			t.Errorf("%s = %q, want %q — an extra parameter overrode a protocol one", name, got, want)
+		}
+	}
+}
+
+// The resource indicator reaches /authorize exactly when configured. An IdP that
+// scopes tokens per resource server (ThunderID) issues no product scope without it,
+// and rejects an empty resource=, so unset must send no parameter at all; nor may a
+// forwarded extra pick the resource server.
+func TestAuthCodeURLResourceIndicator(t *testing.T) {
+	for _, resource := range []string{"", "urn:wso2:cloud"} {
+		o := &OIDC{
+			clientID:    "ai-workspace",
+			redirectURL: "https://portal.example.com/ai-workspace/api/auth/callback",
+			scopes:      "openid",
+			sealer:      testOIDC(t).sealer,
+			disco:       discoveryDoc{AuthorizationEndpoint: "https://idp.example.com/authorize"},
+		}
+		o.SetResource(resource)
+		authURL, _, err := o.AuthCodeURL("/", url.Values{"resource": {"urn:attacker"}})
+		if err != nil {
+			t.Fatalf("AuthCodeURL: %v", err)
+		}
+		u, err := url.Parse(authURL)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if _, present := u.Query()["resource"]; present != (resource != "") {
+			t.Errorf("resource %q: parameter present = %v", resource, present)
+		}
+		if got := u.Query().Get("resource"); got != resource {
+			t.Errorf("resource = %q, want %q", got, resource)
 		}
 	}
 }
@@ -345,7 +380,7 @@ func TestDiscoveryRejectsPlaintextCredentialEndpoints(t *testing.T) {
 		"not a URL":           {"://nonsense", true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			err := requireSecureEndpoint("token_endpoint", tc.endpoint)
+			err := requireSecureEndpoint("token_endpoint", tc.endpoint, true)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("requireSecureEndpoint(%q) = %v, wantErr %v", tc.endpoint, err, tc.wantErr)
 			}
@@ -367,7 +402,7 @@ func TestDiscoveryDropsAPlaintextRevocationEndpoint(t *testing.T) {
 	defer srv.Close()
 
 	o, err := NewOIDC(context.Background(), srv.Client(), srv.URL, "c", "s",
-		"https://portal.example.com/cb", "", "openid",
+		"https://portal.example.com/cb", "", "openid", true,
 		session.DefaultClaimMapping(), time.Hour, testOIDC(t).sealer)
 	if err != nil {
 		t.Fatalf("NewOIDC: %v", err)
@@ -377,5 +412,52 @@ func TestDiscoveryDropsAPlaintextRevocationEndpoint(t *testing.T) {
 	}
 	if err := o.RevokeRefreshToken(context.Background(), "rt"); err != nil {
 		t.Errorf("revocation should no-op, not error: %v", err)
+	}
+}
+
+// require_https = false lifts only the plaintext check, for a local identity provider
+// that serves plain HTTP on a non-loopback host. A malformed endpoint, or one carrying
+// userinfo, is still refused.
+func TestDiscoveryAllowsPlaintextWhenHTTPSNotRequired(t *testing.T) {
+	for name, tc := range map[string]struct {
+		endpoint string
+		wantErr  bool
+	}{
+		"remote http":         {"http://idp.example.com/token", false},
+		"https":               {"https://idp.example.com/token", false},
+		"userinfo in the URL": {"http://user:pw@idp.example.com/token", true},
+		"not a URL":           {"://nonsense", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := requireSecureEndpoint("token_endpoint", tc.endpoint, false)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("requireSecureEndpoint(%q, false) = %v, wantErr %v", tc.endpoint, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// NewOIDC applies require_https to what discovery advertises: a non-loopback http://
+// token_endpoint fails startup when HTTPS is required, and is accepted when it is not.
+func TestNewOIDCPlaintextTokenEndpointFollowsRequireHTTPS(t *testing.T) {
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"issuer":"` + srv.URL + `",` +
+			`"authorization_endpoint":"http://idp.example.com/authorize",` +
+			`"token_endpoint":"http://idp.example.com/token"}`))
+	}))
+	defer srv.Close()
+
+	for _, requireHTTPS := range []bool{true, false} {
+		_, err := NewOIDC(context.Background(), srv.Client(), srv.URL, "c", "s",
+			"https://portal.example.com/cb", "", "openid", requireHTTPS,
+			session.DefaultClaimMapping(), time.Hour, testOIDC(t).sealer)
+		if requireHTTPS && err == nil {
+			t.Error("require_https = true accepted a plaintext token_endpoint")
+		}
+		if !requireHTTPS && err != nil {
+			t.Errorf("require_https = false rejected a plaintext token_endpoint: %v", err)
+		}
 	}
 }

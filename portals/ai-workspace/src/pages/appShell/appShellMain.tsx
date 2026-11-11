@@ -38,6 +38,7 @@ import { useAppAuth } from '../../contexts/AppAuthContext';
 import AppHeader from './AppHeader';
 import AppSidebar from './AppSidebar';
 import AppNotifications from './AppNotifications';
+import ReadOnlyBanner from '../../Components/common/ReadOnlyBanner';
 import AILoader from '../../Components/AILoader';
 import OrgProvisioningPage from '../register/OrgProvisioningPage';
 import {
@@ -77,7 +78,7 @@ export default function AppLayout(): JSX.Element {
   const navigate = useNavigate();
   const location = useLocation();
   const extensions = useSlot<AIWorkspaceExtension>(AI_WORKSPACE_SIDEBAR_SLOT);
-  const { logout } = useAppAuth();
+  const { logout, hasPermission } = useAppAuth();
   // [standalone] const { signOut } = useAuthContext();
 
   const {
@@ -124,6 +125,7 @@ export default function AppLayout(): JSX.Element {
     refreshSignal,
     readOnly,
     readOnlyMessage,
+    readOnlyBanner,
     setReadOnly,
   } = useResourceLimits();
   const resourceLimits = useMemo(
@@ -135,12 +137,14 @@ export default function AppLayout(): JSX.Element {
       refreshSignal,
       readOnly,
       readOnlyMessage,
+      readOnlyBanner,
       setReadOnly,
     }),
     [
       canCreate,
       limitMessage,
       readOnly,
+      readOnlyBanner,
       readOnlyMessage,
       refresh,
       refreshSignal,
@@ -158,8 +162,11 @@ export default function AppLayout(): JSX.Element {
       apiFetch: extensionApiFetch,
       resourceLimits,
       billing: { organization: getBillingOrganization },
+      // Without this the cloud plugins fall back to allowing every control
+      // (`permissionsOf` in each plugin), whatever the user's scopes.
+      permissions: { canAny: (scopes) => scopes.some(hasPermission) },
     }),
-    [currentOrganization, currentProject, navigate, notify, resourceLimits]
+    [currentOrganization, currentProject, hasPermission, navigate, notify, resourceLimits]
   );
 
   // The first-run wizard owns the whole viewport: a user with nothing set up yet
@@ -557,7 +564,32 @@ export default function AppLayout(): JSX.Element {
           {appGates.map((gate) => (
             <Fragment key={gate.id}>{gate.render(port)}</Fragment>
           ))}
-          <Outlet />
+          {/* The workspace is read-only — in this product, a cloud plugin has
+              said so through `setReadOnly`. Stated once here because every
+              write control is already disabled and a disabled button explains
+              nothing.
+
+              The column exists ONLY while there is a banner to show: the shell
+              renders this slot into a `display: flex` box with the default ROW
+              direction, so a banner needs one or it lands beside the page. With
+              no banner — every on-prem and standalone deployment, and every
+              organization that may write — the page is the sole child exactly
+              as before and nothing about its layout changes. The inner box is
+              the one the page used to be a child of, kept so `PageContent`'s
+              `height: 100%` resolves against the space left for the page rather
+              than against the banner's as well. */}
+          {readOnly && readOnlyMessage ? (
+            <Box
+              sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}
+            >
+              <ReadOnlyBanner content={readOnlyBanner ?? readOnlyMessage} />
+              <Box sx={{ flex: 1, minHeight: 0, display: 'flex' }}>
+                <Outlet />
+              </Box>
+            </Box>
+          ) : (
+            <Outlet />
+          )}
         </PortProvider>
       </AppShell.Main>
 
