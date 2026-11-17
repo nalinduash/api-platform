@@ -18,6 +18,9 @@
 
 import { get } from '../clients/publicApiClient';
 import { API_BASE_URLS, isFeatureEnabled } from '../config.env';
+import { PLATFORM_API_BASE_URL } from '../paths';
+import { getHttpStatus } from '../utils/apiError';
+import { createProviderTemplate, getProviderTemplates } from './providerTemplateApis';
 import { familyHandle } from '../utils/providerTemplateDisplay';
 import type { ProviderTemplate } from '../utils/types';
 
@@ -106,6 +109,32 @@ export const getModelHubTemplate = async (
 };
 
 /**
+ * Who manages an imported template. Platform API reserves 'wso2' for its own
+ * built-ins, and this also records that the template came from the Hub.
+ */
+export const HUB_MANAGED_BY = 'model-hub';
+
+/**
+ * The handle Platform API derives from a display name: lower case, spaces and
+ * underscores as hyphens, other characters dropped. It ignores a template's id.
+ */
+const handleOf = (displayName: string): string =>
+  displayName
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+
+/** True when the template is (any version of) this Hub provider. */
+const isTemplateOf = (template: ProviderTemplate, provider: ModelHubProvider): boolean => {
+  const names = new Set([provider.name, `wso2-${provider.name}`, handleOf(provider.displayName)]);
+  const family = familyHandle(template.id).toLowerCase();
+  const group = (template.groupId ?? '').toLowerCase();
+  return names.has(family) || names.has(group);
+};
+
+/**
  * The Hub providers the organization does not have yet. A provider the
  * organization already has a template for (the built-ins, or one imported
  * earlier) is offered through that template instead.
@@ -113,13 +142,54 @@ export const getModelHubTemplate = async (
 export const hubProvidersToOffer = (
   hubProviders: ModelHubProvider[],
   templates: ProviderTemplate[]
-): ModelHubProvider[] => {
-  const owned = new Set<string>();
-  for (const t of templates) {
-    owned.add(familyHandle(t.id).toLowerCase());
-    if (t.groupId) owned.add(t.groupId.toLowerCase());
+): ModelHubProvider[] =>
+  hubProviders.filter((p) => !templates.some((t) => isTemplateOf(t, p)));
+
+/** The organization's template for a Hub provider, if it has one. */
+export const findTemplateForHubProvider = (
+  provider: ModelHubProvider,
+  templates: ProviderTemplate[]
+): ProviderTemplate | undefined =>
+  templates.find((t) => isTemplateOf(t, provider) && t.isLatest !== false) ??
+  templates.find((t) => isTemplateOf(t, provider));
+
+/**
+ * Platform API needs a default endpoint on every template. A self-hosted
+ * provider has none in the Hub, so the user supplies their server's URL.
+ */
+export const needsEndpointUrl = (template: ProviderTemplate): boolean =>
+  !template.metadata?.endpointUrl;
+
+/** The body to POST for an import, with the endpoint the user gave, if any. */
+export const toImportBody = (template: ProviderTemplate, endpointUrl?: string): ProviderTemplate => ({
+  ...template,
+  managedBy: HUB_MANAGED_BY,
+  metadata: {
+    ...template.metadata,
+    endpointUrl: endpointUrl?.trim() || template.metadata?.endpointUrl,
+  },
+});
+
+/**
+ * Adds a Hub provider's template to the organization and returns the template.
+ * When the organization already has it (added in another tab, say), Platform
+ * API answers 409 and the existing template is returned instead. Any other
+ * failure, a 403 included, is thrown for the caller to report.
+ */
+export const addHubProviderToOrganization = async (
+  provider: ModelHubProvider,
+  template: ProviderTemplate,
+  endpointUrl?: string
+): Promise<ProviderTemplate> => {
+  try {
+    return await createProviderTemplate(toImportBody(template, endpointUrl), PLATFORM_API_BASE_URL);
+  } catch (error) {
+    if (getHttpStatus(error) !== 409) throw error;
+    const existing = findTemplateForHubProvider(
+      provider,
+      (await getProviderTemplates(PLATFORM_API_BASE_URL)).list ?? []
+    );
+    if (!existing) throw error;
+    return existing;
   }
-  return hubProviders.filter(
-    (p) => !owned.has(p.name.toLowerCase()) && !owned.has(`wso2-${p.name}`.toLowerCase())
-  );
 };

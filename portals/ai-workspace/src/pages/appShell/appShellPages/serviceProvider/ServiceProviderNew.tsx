@@ -60,11 +60,14 @@ import {
 import TemplateVersionDialog from './AddNewProvider/TemplateVersionDialog';
 import { getErrorMessage, getFieldErrors, getHttpStatus } from '../../../../utils/apiError';
 import {
+  addHubProviderToOrganization,
   getModelHubProviders,
   getModelHubTemplate,
   isModelHubEnabled,
+  needsEndpointUrl,
   type ModelHubProvider,
 } from '../../../../apis/modelHubApis';
+import HubEndpointDialog from './AddNewProvider/HubEndpointDialog';
 import { withUpstreamValuePrefix } from '../../../../utils/providerTemplateFields';
 import { FormattedMessage } from 'react-intl';
 import { reorderItem } from '../../../../Components/GuardrailPill';
@@ -195,6 +198,11 @@ export default function ServiceProviderNew() {
   // is off, unconfigured or unreachable just offers nothing.
   const [hubProviders, setHubProviders] = useState<ModelHubProvider[]>([]);
   const [importingHubProvider, setImportingHubProvider] = useState<string | null>(null);
+  // A self-hosted Hub provider waiting for the user's server URL.
+  const [hubEndpointPending, setHubEndpointPending] = useState<{
+    provider: ModelHubProvider;
+    template: ProviderTemplate;
+  } | null>(null);
   useEffect(() => {
     if (!isModelHubEnabled()) return;
     let active = true;
@@ -573,37 +581,49 @@ export default function ServiceProviderNew() {
 
   // Picking a Hub provider adds its template to the organization, then selects
   // it like any other template.
-  const handleSelectHubProvider = async (provider: ModelHubProvider) => {
+  const reportHubFailure = (error: unknown) => {
+    logger.error('Adding a Model Hub provider failed:', error);
+    showSnackbar(
+      getHttpStatus(error) === 403
+        ? 'You do not have permission to add provider templates.'
+        : 'The provider could not be added from the Model Hub. Try again.',
+      'error'
+    );
+  };
+
+  const addHubProvider = async (
+    provider: ModelHubProvider,
+    template: ProviderTemplate,
+    endpointUrl?: string
+  ) => {
     setImportingHubProvider(provider.name);
     try {
-      const template = await getModelHubTemplate(provider.name, provider.version);
-      let created: ProviderTemplate;
-      try {
-        created = await providerTemplateApis.createProviderTemplate(
-          template,
-          PLATFORM_API_BASE_URL
-        );
-      } catch (error) {
-        // Added since the page loaded (another tab or user): use that one.
-        if (getHttpStatus(error) !== 409) throw error;
-        created = await providerTemplateApis.getProviderTemplate(
-          template.id,
-          PLATFORM_API_BASE_URL
-        );
-      }
+      const added = await addHubProviderToOrganization(provider, template, endpointUrl);
       await refreshTemplates();
-      await handleSelectTemplate(created);
+      await handleSelectTemplate(added);
     } catch (error) {
-      logger.error('Adding a Model Hub provider failed:', error);
-      showSnackbar(
-        getHttpStatus(error) === 403
-          ? 'You do not have permission to add provider templates.'
-          : 'The provider could not be added from the Model Hub. Try again.',
-        'error'
-      );
+      reportHubFailure(error);
     } finally {
       setImportingHubProvider(null);
     }
+  };
+
+  const handleSelectHubProvider = async (provider: ModelHubProvider) => {
+    setImportingHubProvider(provider.name);
+    let template: ProviderTemplate;
+    try {
+      template = await getModelHubTemplate(provider.name, provider.version);
+    } catch (error) {
+      setImportingHubProvider(null);
+      reportHubFailure(error);
+      return;
+    }
+    if (needsEndpointUrl(template)) {
+      setImportingHubProvider(null);
+      setHubEndpointPending({ provider, template });
+      return;
+    }
+    await addHubProvider(provider, template);
   };
 
   return (
@@ -646,6 +666,19 @@ export default function ServiceProviderNew() {
             importingHubProvider={importingHubProvider}
             onSelectHubProvider={(provider) => void handleSelectHubProvider(provider)}
           />
+
+          {hubEndpointPending && (
+            <HubEndpointDialog
+              open
+              displayName={hubEndpointPending.provider.displayName}
+              onClose={() => setHubEndpointPending(null)}
+              onConfirm={(endpointUrl) => {
+                const { provider, template } = hubEndpointPending;
+                setHubEndpointPending(null);
+                void addHubProvider(provider, template, endpointUrl);
+              }}
+            />
+          )}
 
           {pendingTemplate && (
             <TemplateVersionDialog

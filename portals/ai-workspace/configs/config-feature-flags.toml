@@ -49,3 +49,7 @@
 
 [ai_workspace.feature_flags]
 agent_proxy_enabled = true
+# Model Hub providers offered beside the organization's templates when adding an
+# LLM provider. Also needs the Hub's address, outside this table:
+#   [ai_workspace] api_model_hub = "https://<model hub API>"
+model_hub_enabled = true

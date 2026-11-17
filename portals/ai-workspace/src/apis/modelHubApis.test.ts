@@ -21,6 +21,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const get = vi.fn();
 vi.mock('../clients/publicApiClient', () => ({ get: (...args: unknown[]) => get(...args) }));
 
+const createProviderTemplate = vi.fn();
+const getProviderTemplates = vi.fn();
+vi.mock('./providerTemplateApis', () => ({
+  createProviderTemplate: (...args: unknown[]) => createProviderTemplate(...args),
+  getProviderTemplates: (...args: unknown[]) => getProviderTemplates(...args),
+}));
+vi.mock('../paths', () => ({ PLATFORM_API_BASE_URL: '/cp' }));
+
 const config = vi.hoisted(() => ({ url: 'https://hub.test/v1', enabled: true }));
 vi.mock('../config.env', () => ({
   get API_BASE_URLS() {
@@ -30,7 +38,11 @@ vi.mock('../config.env', () => ({
 }));
 
 import {
+  addHubProviderToOrganization,
+  findTemplateForHubProvider,
   getModelHubProviders,
+  needsEndpointUrl,
+  toImportBody,
   getModelHubTemplate,
   hubProvidersToOffer,
   isModelHubEnabled,
@@ -49,6 +61,8 @@ const openai = { ...vllm, name: 'openai', displayName: 'OpenAI', iconUrl: 'provi
 
 beforeEach(() => {
   get.mockReset();
+  createProviderTemplate.mockReset();
+  getProviderTemplates.mockReset();
   config.url = 'https://hub.test/v1';
   config.enabled = true;
 });
@@ -121,5 +135,58 @@ describe('hubProvidersToOffer', () => {
 
   it('offers everything to an organization with no templates', () => {
     expect(hubProvidersToOffer(hub, [])).toHaveLength(2);
+  });
+});
+
+describe('importing a Hub provider', () => {
+  const provider = toModelHubProvider(vllm);
+  const hubTemplate = {
+    id: 'vllm',
+    displayName: 'vLLM',
+    version: 'v1.0',
+    managedBy: 'wso2',
+    metadata: { auth: { type: 'apiKey', header: 'Authorization', valuePrefix: 'Bearer ' } },
+  } as ProviderTemplate;
+  // Platform API names the template after its display name, not the body's id.
+  const created = { ...hubTemplate, id: 'vllm-v1-0', groupId: 'vllm', managedBy: 'model-hub' } as ProviderTemplate;
+  const httpError = (status: number) => Object.assign(new Error('request failed'), { status });
+
+  it("never sends 'wso2', which Platform API reserves for its built-ins", () => {
+    expect(toImportBody(hubTemplate).managedBy).toBe('model-hub');
+  });
+
+  it('asks for an endpoint only when the Hub has none', () => {
+    expect(needsEndpointUrl(hubTemplate)).toBe(true);
+    const withUrl = toImportBody(hubTemplate, ' https://vllm.example.com/v1 ');
+    expect(withUrl.metadata?.endpointUrl).toBe('https://vllm.example.com/v1');
+    expect(withUrl.metadata?.auth?.header).toBe('Authorization');
+    expect(needsEndpointUrl(withUrl)).toBe(false);
+  });
+
+  it('creates the template and returns what Platform API stored', async () => {
+    createProviderTemplate.mockResolvedValue(created);
+    await expect(addHubProviderToOrganization(provider, hubTemplate, 'https://vllm.example.com/v1')).resolves.toBe(created);
+    const [body, base] = createProviderTemplate.mock.calls[0];
+    expect(base).toBe('/cp');
+    expect(body).toMatchObject({ managedBy: 'model-hub', metadata: { endpointUrl: 'https://vllm.example.com/v1' } });
+  });
+
+  it('uses the existing template when the organization already has it (409)', async () => {
+    createProviderTemplate.mockRejectedValue(httpError(409));
+    getProviderTemplates.mockResolvedValue({ list: [{ id: 'openai', displayName: 'OpenAI', version: 'v1.0' }, created] });
+    await expect(addHubProviderToOrganization(provider, hubTemplate, 'https://x.example.com')).resolves.toBe(created);
+  });
+
+  it('passes a permission failure (403) to the caller', async () => {
+    createProviderTemplate.mockRejectedValue(httpError(403));
+    await expect(addHubProviderToOrganization(provider, hubTemplate)).rejects.toMatchObject({ status: 403 });
+    expect(getProviderTemplates).not.toHaveBeenCalled();
+  });
+
+  it('matches the template Platform API generated from the display name', () => {
+    const azure = toModelHubProvider({ ...vllm, name: 'azure-oai', displayName: 'Azure OpenAI' });
+    const templates = [{ id: 'azure-openai-v1-0', groupId: 'azure-openai', displayName: 'Azure OpenAI', version: 'v1.0' } as ProviderTemplate];
+    expect(findTemplateForHubProvider(azure, templates)?.id).toBe('azure-openai-v1-0');
+    expect(hubProvidersToOffer([azure], templates)).toEqual([]);
   });
 });

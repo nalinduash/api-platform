@@ -59,15 +59,28 @@ func TestBuildRuntimeConfig_FeatureFlagReachesTheSPA(t *testing.T) {
 
 // The Model Hub needs both its flag and its URL in the browser.
 func TestBuildRuntimeConfig_ModelHubReachesTheSPA(t *testing.T) {
-	k := loadRuntimeKoanf(t, "api_model_hub = \"https://hub.example.com/v1\"\n[feature_flags]\nmodel_hub_enabled = true\n")
+	for _, set := range []string{"false", "true"} {
+		k := loadRuntimeKoanf(t, "api_model_hub = \"https://hub.example.com/v1\"\n[feature_flags]\nmodel_hub_enabled = "+set+"\n")
 
-	out := buildRuntimeConfig(&Config{}, k)
+		out := buildRuntimeConfig(&Config{}, k)
 
-	if got := out["APIP_AIW_FEATURE_FLAGS_MODEL_HUB_ENABLED"]; got != "true" {
-		t.Errorf("model_hub_enabled reached the SPA as %q, want true", got)
+		if got := out["APIP_AIW_FEATURE_FLAGS_MODEL_HUB_ENABLED"]; got != set {
+			t.Errorf("model_hub_enabled = %s reached the SPA as %q", set, got)
+		}
+		if got := out["APIP_AIW_API_MODEL_HUB"]; got != "https://hub.example.com/v1" {
+			t.Errorf("api_model_hub reached the SPA as %q", got)
+		}
 	}
-	if got := out["APIP_AIW_API_MODEL_HUB"]; got != "https://hub.example.com/v1" {
-		t.Errorf("api_model_hub reached the SPA as %q", got)
+}
+
+// An unconfigured deployment sends neither key, so the Hub stays hidden.
+func TestBuildRuntimeConfig_AbsentModelHubIsOmitted(t *testing.T) {
+	out := buildRuntimeConfig(&Config{}, loadRuntimeKoanf(t, "default_org_region = \"us\"\n"))
+
+	for _, key := range []string{"APIP_AIW_FEATURE_FLAGS_MODEL_HUB_ENABLED", "APIP_AIW_API_MODEL_HUB"} {
+		if _, ok := out[key]; ok {
+			t.Errorf("%s was emitted although the config never declares it", key)
+		}
 	}
 }
 
