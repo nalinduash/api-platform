@@ -19,7 +19,7 @@
 import { get } from '../clients/publicApiClient';
 import { API_BASE_URLS, isFeatureEnabled } from '../config.env';
 import { PLATFORM_API_BASE_URL } from '../paths';
-import { getHttpStatus } from '../utils/apiError';
+import { getErrorCode, getErrorMessage, getHttpStatus } from '../utils/apiError';
 import { createProviderTemplate, getProviderTemplates } from './providerTemplateApis';
 import { familyHandle } from '../utils/providerTemplateDisplay';
 import type { ProviderTemplate } from '../utils/types';
@@ -192,4 +192,17 @@ export const addHubProviderToOrganization = async (
     if (!existing) throw error;
     return existing;
   }
+};
+
+/**
+ * What to tell the user when adding a Hub provider failed. Platform API's
+ * validation messages are written for users (a rejected server URL, say), so
+ * they are shown as they are; anything else gets a generic message.
+ */
+export const hubImportErrorMessage = (error: unknown): string => {
+  if (getHttpStatus(error) === 403) return 'You do not have permission to add provider templates.';
+  if (getErrorCode(error) === 'VALIDATION_FAILED') {
+    return getErrorMessage(error, 'The provider could not be added from the Model Hub.');
+  }
+  return 'The provider could not be added from the Model Hub. Try again.';
 };

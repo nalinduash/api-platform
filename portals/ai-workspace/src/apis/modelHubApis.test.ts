@@ -41,6 +41,7 @@ import {
   addHubProviderToOrganization,
   findTemplateForHubProvider,
   getModelHubProviders,
+  hubImportErrorMessage,
   needsEndpointUrl,
   toImportBody,
   getModelHubTemplate,
@@ -188,5 +189,29 @@ describe('importing a Hub provider', () => {
     const templates = [{ id: 'azure-openai-v1-0', groupId: 'azure-openai', displayName: 'Azure OpenAI', version: 'v1.0' } as ProviderTemplate];
     expect(findTemplateForHubProvider(azure, templates)?.id).toBe('azure-openai-v1-0');
     expect(hubProvidersToOffer([azure], templates)).toEqual([]);
+  });
+});
+
+describe('hubImportErrorMessage', () => {
+  const apiError = (status: number, code?: string, message = 'request failed') =>
+    Object.assign(new Error(message), { status, code });
+
+  it("shows Platform API's reason when it rejects the template", () => {
+    // The real reply for a private-network server URL, seen in the end-to-end run.
+    const error = apiError(400, 'VALIDATION_FAILED', 'The metadata endpointUrl must be a valid, publicly reachable URL.');
+    expect(hubImportErrorMessage(error)).toBe('The metadata endpointUrl must be a valid, publicly reachable URL.');
+  });
+
+  it('explains a permission failure', () => {
+    expect(hubImportErrorMessage(apiError(403, 'FORBIDDEN'))).toBe('You do not have permission to add provider templates.');
+  });
+
+  it('keeps other failures generic', () => {
+    expect(hubImportErrorMessage(apiError(500, 'INTERNAL', 'db at 10.0.0.5 down'))).toBe(
+      'The provider could not be added from the Model Hub. Try again.'
+    );
+    expect(hubImportErrorMessage(new TypeError('Failed to fetch'))).toBe(
+      'The provider could not be added from the Model Hub. Try again.'
+    );
   });
 });

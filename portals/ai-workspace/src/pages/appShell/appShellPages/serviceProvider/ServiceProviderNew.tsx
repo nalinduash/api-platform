@@ -58,11 +58,12 @@ import {
   autoAttachesCostPolicy,
 } from '../../../../utils/providerTemplateDisplay';
 import TemplateVersionDialog from './AddNewProvider/TemplateVersionDialog';
-import { getErrorMessage, getFieldErrors, getHttpStatus } from '../../../../utils/apiError';
+import { getErrorMessage, getFieldErrors } from '../../../../utils/apiError';
 import {
   addHubProviderToOrganization,
   getModelHubProviders,
   getModelHubTemplate,
+  hubImportErrorMessage,
   isModelHubEnabled,
   needsEndpointUrl,
   type ModelHubProvider,
@@ -583,12 +584,7 @@ export default function ServiceProviderNew() {
   // it like any other template.
   const reportHubFailure = (error: unknown) => {
     logger.error('Adding a Model Hub provider failed:', error);
-    showSnackbar(
-      getHttpStatus(error) === 403
-        ? 'You do not have permission to add provider templates.'
-        : 'The provider could not be added from the Model Hub. Try again.',
-      'error'
-    );
+    showSnackbar(hubImportErrorMessage(error), 'error');
   };
 
   const addHubProvider = async (
