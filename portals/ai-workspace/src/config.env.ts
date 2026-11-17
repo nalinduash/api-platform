@@ -147,6 +147,12 @@ const FEATURE_FLAGS = {
     'APIP_AIW_FEATURE_FLAGS_AGENT_PROXY_ENABLED',
     false
   ),
+  // Model Hub providers offered beside the organization's templates when adding
+  // a provider. Needs APIP_AIW_API_MODEL_HUB as well.
+  'model-hub': getEnvOrDefault(
+    'APIP_AIW_FEATURE_FLAGS_MODEL_HUB_ENABLED',
+    false
+  ),
 };
 
 export type FeatureId = keyof typeof FEATURE_FLAGS;
@@ -165,6 +171,8 @@ export const API_BASE_URLS = {
     'APIP_AIW_API_POLICY_HUB',
     'https://db720294-98fd-40f4-85a1-cc6a3b65bc9a-dev.e1-us-east-azure.choreoapis.dev/api-platform/policy-hub-api/policy-hub-public/v1.0'
   ),
+  // Empty means no Model Hub is configured, and nothing calls it.
+  modelHubApi: getEnvOrDefault('APIP_AIW_API_MODEL_HUB', ''),
 } as const;
 
 // Moesif web console base URL

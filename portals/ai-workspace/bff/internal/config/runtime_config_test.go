@@ -57,6 +57,20 @@ func TestBuildRuntimeConfig_FeatureFlagReachesTheSPA(t *testing.T) {
 	}
 }
 
+// The Model Hub needs both its flag and its URL in the browser.
+func TestBuildRuntimeConfig_ModelHubReachesTheSPA(t *testing.T) {
+	k := loadRuntimeKoanf(t, "api_model_hub = \"https://hub.example.com/v1\"\n[feature_flags]\nmodel_hub_enabled = true\n")
+
+	out := buildRuntimeConfig(&Config{}, k)
+
+	if got := out["APIP_AIW_FEATURE_FLAGS_MODEL_HUB_ENABLED"]; got != "true" {
+		t.Errorf("model_hub_enabled reached the SPA as %q, want true", got)
+	}
+	if got := out["APIP_AIW_API_MODEL_HUB"]; got != "https://hub.example.com/v1" {
+		t.Errorf("api_model_hub reached the SPA as %q", got)
+	}
+}
+
 // A deployment that never mentions a feature must leave it on, which it does by the
 // key being absent and the SPA falling back to its own default.
 func TestBuildRuntimeConfig_AbsentFeatureFlagIsOmitted(t *testing.T) {

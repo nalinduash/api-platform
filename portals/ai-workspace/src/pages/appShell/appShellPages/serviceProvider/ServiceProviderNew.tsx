@@ -58,7 +58,13 @@ import {
   autoAttachesCostPolicy,
 } from '../../../../utils/providerTemplateDisplay';
 import TemplateVersionDialog from './AddNewProvider/TemplateVersionDialog';
-import { getErrorMessage, getFieldErrors } from '../../../../utils/apiError';
+import { getErrorMessage, getFieldErrors, getHttpStatus } from '../../../../utils/apiError';
+import {
+  getModelHubProviders,
+  getModelHubTemplate,
+  isModelHubEnabled,
+  type ModelHubProvider,
+} from '../../../../apis/modelHubApis';
 import { withUpstreamValuePrefix } from '../../../../utils/providerTemplateFields';
 import { FormattedMessage } from 'react-intl';
 import { reorderItem } from '../../../../Components/GuardrailPill';
@@ -184,6 +190,23 @@ export default function ServiceProviderNew() {
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
     null
   );
+
+  // Model Hub providers offered beside the organization's templates. A Hub that
+  // is off, unconfigured or unreachable just offers nothing.
+  const [hubProviders, setHubProviders] = useState<ModelHubProvider[]>([]);
+  const [importingHubProvider, setImportingHubProvider] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isModelHubEnabled()) return;
+    let active = true;
+    getModelHubProviders()
+      .then((providers) => {
+        if (active) setHubProviders(providers);
+      })
+      .catch((error) => logger.warn('Model Hub providers could not be loaded:', error));
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const [selectedTemplateVersion, setSelectedTemplateVersion] = useState<
     string | null
@@ -548,6 +571,41 @@ export default function ServiceProviderNew() {
     setVersionDialogOpen(true);
   };
 
+  // Picking a Hub provider adds its template to the organization, then selects
+  // it like any other template.
+  const handleSelectHubProvider = async (provider: ModelHubProvider) => {
+    setImportingHubProvider(provider.name);
+    try {
+      const template = await getModelHubTemplate(provider.name, provider.version);
+      let created: ProviderTemplate;
+      try {
+        created = await providerTemplateApis.createProviderTemplate(
+          template,
+          PLATFORM_API_BASE_URL
+        );
+      } catch (error) {
+        // Added since the page loaded (another tab or user): use that one.
+        if (getHttpStatus(error) !== 409) throw error;
+        created = await providerTemplateApis.getProviderTemplate(
+          template.id,
+          PLATFORM_API_BASE_URL
+        );
+      }
+      await refreshTemplates();
+      await handleSelectTemplate(created);
+    } catch (error) {
+      logger.error('Adding a Model Hub provider failed:', error);
+      showSnackbar(
+        getHttpStatus(error) === 403
+          ? 'You do not have permission to add provider templates.'
+          : 'The provider could not be added from the Model Hub. Try again.',
+        'error'
+      );
+    } finally {
+      setImportingHubProvider(null);
+    }
+  };
+
   return (
     <PageContent fullWidth>
       <Button
@@ -584,6 +642,9 @@ export default function ServiceProviderNew() {
             onRetryTemplates={refreshTemplates}
             selectedTemplateVersion={selectedTemplateVersion ?? undefined}
             onSelectTemplate={(template) => void handleSelectTemplate(template)}
+            hubProviders={hubProviders}
+            importingHubProvider={importingHubProvider}
+            onSelectHubProvider={(provider) => void handleSelectHubProvider(provider)}
           />
 
           {pendingTemplate && (

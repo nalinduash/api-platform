@@ -35,6 +35,10 @@ import type {
   ProviderTemplate,
   ProviderTemplatesResponse,
 } from '../../../../../utils/types';
+import {
+  hubProvidersToOffer,
+  type ModelHubProvider,
+} from '../../../../../apis/modelHubApis';
 import awsBedrockLogo from '../../../../../assets/brands/AWSBedrock.webp';
 import openAiLogo from '../../../../../assets/brands/openAI.png';
 import anthropicLogo from '../../../../../assets/brands/Anthropic.jpg';
@@ -132,6 +136,11 @@ type ProviderTemplateSelectorProps = {
   selectedTemplateVersion?: string;
   onSelectTemplate: (template: ProviderTemplate) => void;
   onRetryTemplates: () => void | Promise<void>;
+  /** Model Hub providers. Those the organization already has are not offered. */
+  hubProviders?: ModelHubProvider[];
+  /** Name of the Hub provider being imported, while it is. */
+  importingHubProvider?: string | null;
+  onSelectHubProvider?: (provider: ModelHubProvider) => void;
 };
 
 export default function ProviderTemplateSelector({
@@ -142,6 +151,9 @@ export default function ProviderTemplateSelector({
   selectedTemplateVersion,
   onSelectTemplate,
   onRetryTemplates,
+  hubProviders = [],
+  importingHubProvider = null,
+  onSelectHubProvider,
 }: ProviderTemplateSelectorProps) {
   const COLLAPSED_COUNT = 8;
   const [showAll, setShowAll] = React.useState(false);
@@ -160,6 +172,10 @@ export default function ProviderTemplateSelector({
       sensitivity: 'base',
     })
   );
+
+  const hubOffer = onSelectHubProvider
+    ? hubProvidersToOffer(hubProviders, templatesResponse?.list ?? [])
+    : [];
 
   const hasMore = deduplicatedTemplates.length > COLLAPSED_COUNT;
   const hiddenCount = deduplicatedTemplates.length - COLLAPSED_COUNT;
@@ -335,6 +351,96 @@ export default function ProviderTemplateSelector({
                 {showAll ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
               </Form.CardButton>
             )}
+          </Box>
+        )}
+        {!templatesLoading && !templatesError && hubOffer.length > 0 && (
+          <Box sx={{ mt: 2.5 }} data-cyid="model-hub-providers">
+            <Typography variant="body2" color="text.secondary">
+              <FormattedMessage
+                id="aiWorkspace.pages.appShell.appShellPages.serviceProvider.AddNewProvider.ProviderTemplateSelector.model.hub.title"
+                defaultMessage="From Model Hub"
+              />
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              <FormattedMessage
+                id="aiWorkspace.pages.appShell.appShellPages.serviceProvider.AddNewProvider.ProviderTemplateSelector.model.hub.hint"
+                defaultMessage="Picking one adds it to your organization's provider templates."
+              />
+            </Typography>
+            <Box
+              sx={{
+                mt: 1,
+                display: 'grid',
+                gap: 1.5,
+                gridTemplateColumns: {
+                  xs: '1fr',
+                  sm: 'repeat(2, 1fr)',
+                  md: 'repeat(3, 1fr)',
+                },
+              }}
+            >
+              {hubOffer.map((provider) => {
+                const importing = importingHubProvider === provider.name;
+                return (
+                  <Form.CardButton
+                    key={provider.name}
+                    disabled={Boolean(importingHubProvider)}
+                    onClick={() => onSelectHubProvider?.(provider)}
+                    data-cyid={`model-hub-provider-${provider.name}-card`}
+                    sx={{
+                      display: 'flex',
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 1.5,
+                      py: 1,
+                      paddingLeft: 1,
+                      textAlign: 'left',
+                    }}
+                  >
+                    <Box
+                      sx={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 1,
+                        border: '1px solid',
+                        borderColor: 'divider',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backgroundColor: 'common.white',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <TemplateLogo
+                        candidates={provider.iconUrl ? [provider.iconUrl] : []}
+                        alt={`${provider.displayName} logo`}
+                        shortName={getShortNameForTemplate(provider.displayName)}
+                      />
+                    </Box>
+                    <Box sx={{ minWidth: 0, flex: 1 }}>
+                      <Typography variant="subtitle2" noWrap title={provider.displayName}>
+                        {truncateProviderDisplayName(provider.displayName)}
+                      </Typography>
+                    </Box>
+                    {importing ? (
+                      <CircularProgress size={16} sx={{ mr: 1 }} />
+                    ) : (
+                      <Chip
+                        label={
+                          <FormattedMessage
+                            id="aiWorkspace.pages.appShell.appShellPages.serviceProvider.AddNewProvider.ProviderTemplateSelector.model.hub.badge"
+                            defaultMessage="Model Hub"
+                          />
+                        }
+                        size="small"
+                        variant="outlined"
+                        sx={{ flexShrink: 0, mr: 1, height: 20 }}
+                      />
+                    )}
+                  </Form.CardButton>
+                );
+              })}
+            </Box>
           </Box>
         )}
       </FormControl>
